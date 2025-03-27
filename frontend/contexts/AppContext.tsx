@@ -16,11 +16,11 @@ const AppContext = createContext<AppContextState | undefined>(undefined);
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   
-  // Set a default API URL based on environment
-  // In a real app, this would come from environment variables or configuration
+  // Set the API URL based on environment
+  // Using the actual IP address of the computer on the local WiFi network
   const defaultApiUrl = Platform.OS === 'web' 
     ? 'http://localhost:5000/api' 
-    : 'http://10.0.2.2:5000/api'; // 10.0.2.2 is the special IP to access the host from an Android emulator
+    : 'http://10.0.0.42:5000/api'; // Your computer's actual IP address
   
   const [apiBaseUrl, setApiBaseUrlState] = useState(defaultApiUrl);
   
