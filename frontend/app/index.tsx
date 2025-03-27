@@ -10,9 +10,9 @@ export default function HomeScreen() {
 
   const checkNfcSupport = async () => {
     try {
-      const isSupported = await NFCService.isNfcSupported();
+      const isSupported = await NFCService.checkIsNfcSupported();
       if (!isSupported) {
-        alert('NFC is not supported on this device');
+        alert('NFC is not supported on this device or platform');
       }
     } catch (error) {
       console.error('Error checking NFC support:', error);

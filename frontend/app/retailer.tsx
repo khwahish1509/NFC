@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   TextInput,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +34,11 @@ export default function RetailerScreen() {
 
   const getCurrentLocation = async () => {
     try {
+      // Only try to get location on actual devices
+      if (Platform.OS === 'web') {
+        return null;
+      }
+      
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Location permission is required');
@@ -51,6 +57,18 @@ export default function RetailerScreen() {
   };
 
   const handleScanNFC = async () => {
+    // Check if NFC is available
+    if (Platform.OS === 'web') {
+      Alert.alert('Error', 'NFC features are not available in web mode. Please use a physical device.');
+      return;
+    }
+
+    const isSupported = await NFCService.checkIsNfcSupported();
+    if (!isSupported) {
+      Alert.alert('Error', 'NFC is not supported on this device');
+      return;
+    }
+    
     try {
       setIsReadingNFC(true);
       
