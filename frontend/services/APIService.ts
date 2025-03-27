@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { Platform } from 'react-native';
 
 // Base URL should be configured based on environment - set a default for now
 // For development with actual devices, this should be the IP address of your computer on the local network
@@ -52,13 +53,30 @@ const mockProducts: Record<string, ProductData> = {
   }
 };
 
+// Helper function to check if we're in a web environment
+const isWebMockEnvironment = () => {
+  // For Expo Go, use platform check
+  if (Platform.OS === 'web') return true;
+  
+  // Safer check for React Native web debugging
+  try {
+    return typeof window !== 'undefined' && 
+           window.navigator && 
+           typeof window.navigator.userAgent === 'string' && 
+           window.navigator.userAgent.includes('ReactNativeDebugger');
+  } catch (error) {
+    // If there's any error in the check, assume we're not in a web mock environment
+    return false;
+  }
+};
+
 // API service class
 class APIService {
   // Create a new product
   createProduct = async (productData: ProductData) => {
     try {
       // Handle web environment with mock data
-      if (typeof window !== 'undefined' && window.navigator.userAgent.includes('ReactNativeDebugger')) {
+      if (isWebMockEnvironment()) {
         console.log('Mock API call - createProduct', productData);
         mockProducts[productData.productId] = productData;
         return productData;
@@ -79,7 +97,7 @@ class APIService {
   getProductById = async (productId: string) => {
     try {
       // Handle web environment with mock data
-      if (typeof window !== 'undefined' && window.navigator.userAgent.includes('ReactNativeDebugger')) {
+      if (isWebMockEnvironment()) {
         console.log('Mock API call - getProductById', productId);
         // Return mock data for testing
         if (mockProducts[productId]) {
@@ -103,7 +121,7 @@ class APIService {
   getAllProducts = async () => {
     try {
       // Handle web environment with mock data
-      if (typeof window !== 'undefined' && window.navigator.userAgent.includes('ReactNativeDebugger')) {
+      if (isWebMockEnvironment()) {
         console.log('Mock API call - getAllProducts');
         return Object.values(mockProducts);
       }
@@ -123,7 +141,7 @@ class APIService {
   ) => {
     try {
       // Handle web environment with mock data
-      if (typeof window !== 'undefined' && window.navigator.userAgent.includes('ReactNativeDebugger')) {
+      if (isWebMockEnvironment()) {
         console.log('Mock API call - updateProductTransfer', productId, transferData);
         
         if (mockProducts[productId]) {

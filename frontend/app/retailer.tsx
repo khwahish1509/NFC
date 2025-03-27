@@ -58,11 +58,6 @@ export default function RetailerScreen() {
 
   const handleScanNFC = async () => {
     // Check if NFC is available
-    if (Platform.OS === 'web') {
-      Alert.alert('Error', 'NFC features are not available in web mode. Please use a physical device.');
-      return;
-    }
-
     const isSupported = await NFCService.checkIsNfcSupported();
     if (!isSupported) {
       Alert.alert('Error', 'NFC is not supported on this device');

@@ -3,19 +3,32 @@ import React from 'react';
 import { AppProvider } from '../contexts/AppContext';
 import { StatusBar } from 'expo-status-bar';
 
-export default function AppLayout() {
+// This is the root layout component
+export default function RootLayout() {
   return (
     <AppProvider>
       <StatusBar style="dark" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          animation: 'slide_from_right',
-        }}
-      >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="farmer" />
-        <Stack.Screen name="retailer" />
+      <Stack>
+        <Stack.Screen
+          name="index"
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="farmer"
+          options={{
+            headerShown: false,
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
+          name="retailer"
+          options={{
+            headerShown: false,
+            animation: 'slide_from_right',
+          }}
+        />
       </Stack>
     </AppProvider>
   );
