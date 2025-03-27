@@ -1,47 +1,78 @@
-import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Platform } from 'react-native';
-import { setApiBaseUrl } from '../services/APIService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-type UserRole = 'farmer' | 'retailer';
-
-interface AppContextState {
-  userRole: UserRole | null;
-  setUserRole: (role: UserRole) => void;
-  apiBaseUrl: string;
-  setApiBaseUrl: (url: string) => void;
+// Define the app context type
+interface AppContextType {
+  apiUrl: string;
+  userRole: 'farmer' | 'retailer' | null;
+  setUserRole: (role: 'farmer' | 'retailer' | null) => void;
 }
 
-const AppContext = createContext<AppContextState | undefined>(undefined);
+// Create context with default values
+const AppContext = createContext<AppContextType>({
+  apiUrl: '',
+  userRole: null,
+  setUserRole: () => {},
+});
 
-export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [userRole, setUserRole] = useState<UserRole | null>(null);
-  
-  // Set the API URL based on environment
-  // Using the actual IP address of the computer on the local WiFi network
-  const defaultApiUrl = Platform.OS === 'web' 
-    ? 'http://localhost:5000/api' 
-    : 'http://10.0.0.42:5000/api'; // Your computer's actual IP address
-  
-  const [apiBaseUrl, setApiBaseUrlState] = useState(defaultApiUrl);
-  
-  // Update the API URL whenever it changes in the context
-  const updateApiBaseUrl = (url: string) => {
-    setApiBaseUrlState(url);
-    setApiBaseUrl(url); // This updates the URL in the API service
-  };
+// Safe check for web environment
+const isWebEnvironment = () => {
+  try {
+    return Platform.OS === 'web';
+  } catch (error) {
+    return false;
+  }
+};
 
-  // Initialize API URL
+// Define the provider component
+export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [userRole, setUserRole] = useState<'farmer' | 'retailer' | null>(null);
+
+  // Define API URL based on platform
+  const apiUrl = isWebEnvironment()
+    ? 'http://localhost:5000/api' // Web development URL
+    : 'http://10.0.0.42:5000/api'; // Mobile device URL (using your IP)
+
+  // Load saved user role from AsyncStorage on app start
   useEffect(() => {
-    setApiBaseUrl(apiBaseUrl);
+    const loadUserRole = async () => {
+      try {
+        const savedRole = await AsyncStorage.getItem('userRole');
+        if (savedRole === 'farmer' || savedRole === 'retailer') {
+          setUserRole(savedRole);
+        }
+      } catch (error) {
+        console.error('Error loading user role:', error);
+      }
+    };
+
+    loadUserRole();
   }, []);
 
+  // Save user role to AsyncStorage when it changes
+  useEffect(() => {
+    const saveUserRole = async () => {
+      try {
+        if (userRole) {
+          await AsyncStorage.setItem('userRole', userRole);
+        } else {
+          await AsyncStorage.removeItem('userRole');
+        }
+      } catch (error) {
+        console.error('Error saving user role:', error);
+      }
+    };
+
+    saveUserRole();
+  }, [userRole]);
+
   return (
-    <AppContext.Provider 
-      value={{ 
-        userRole, 
-        setUserRole, 
-        apiBaseUrl, 
-        setApiBaseUrl: updateApiBaseUrl 
+    <AppContext.Provider
+      value={{
+        apiUrl,
+        userRole,
+        setUserRole,
       }}
     >
       {children}
@@ -49,10 +80,5 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 };
 
-export const useAppContext = (): AppContextState => {
-  const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useAppContext must be used within an AppProvider');
-  }
-  return context;
-}; 
+// Custom hook to use the app context
+export const useAppContext = () => useContext(AppContext); 

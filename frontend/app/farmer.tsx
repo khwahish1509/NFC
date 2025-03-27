@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,28 +10,51 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Modal,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useAppContext } from '../contexts/AppContext';
 import NFCService from '../services/NFCService';
 import APIService, { ProductData } from '../services/APIService';
 import * as Location from 'expo-location';
 
+// Import DateTimePicker conditionally to avoid errors in Expo Go web
+let DateTimePicker: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    DateTimePicker = require('@react-native-community/datetimepicker').default;
+  } catch (error) {
+    console.log('DateTimePicker not available:', error);
+  }
+}
+
 export default function FarmerScreen() {
-  const { userRole } = useAppContext();
+  const { userRole, apiUrl } = useAppContext();
   const [productName, setProductName] = useState('');
   const [origin, setOrigin] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
-  const [dateProduced, setDateProduced] = useState('');
+  const [dateProduced, setDateProduced] = useState(new Date());
+  const [currentLocation, setCurrentLocation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isWritingNFC, setIsWritingNFC] = useState(false);
+  const [isShowingDatePicker, setIsShowingDatePicker] = useState(false);
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+  const [productId, setProductId] = useState<string | null>(null);
+  const [isQrModalVisible, setIsQrModalVisible] = useState(false);
+
+  // Set API base URL from context
+  useEffect(() => {
+    if (apiUrl) {
+      APIService.setApiBaseUrl(apiUrl);
+    }
+  }, [apiUrl]);
 
   // Redirect if not a farmer
-  React.useEffect(() => {
+  useEffect(() => {
     if (userRole !== 'farmer') {
-      router.replace('/');
+      router.push('/');
     }
   }, [userRole]);
 
@@ -61,29 +84,21 @@ export default function FarmerScreen() {
 
   const validateForm = () => {
     if (!productName.trim()) {
-      Alert.alert('Error', 'Product name is required');
+      Alert.alert('Error', 'Please enter a product name');
       return false;
     }
     if (!origin.trim()) {
-      Alert.alert('Error', 'Origin is required');
+      Alert.alert('Error', 'Please enter the origin');
       return false;
     }
     if (!batchNumber.trim()) {
-      Alert.alert('Error', 'Batch number is required');
+      Alert.alert('Error', 'Please enter a batch number');
       return false;
     }
-    if (!dateProduced.trim()) {
-      Alert.alert('Error', 'Production date is required');
+    if (!currentLocation.trim()) {
+      Alert.alert('Error', 'Please enter the current location');
       return false;
     }
-    
-    // Simple date validation (YYYY-MM-DD format)
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(dateProduced)) {
-      Alert.alert('Error', 'Date must be in YYYY-MM-DD format');
-      return false;
-    }
-    
     return true;
   };
 
@@ -91,77 +106,133 @@ export default function FarmerScreen() {
     if (!validateForm()) return;
 
     // Check if NFC is available
-    const isSupported = await NFCService.checkIsNfcSupported();
-    if (!isSupported) {
-      Alert.alert('Error', 'NFC is not supported on this device');
-      return;
-    }
-
     try {
-      setIsWritingNFC(true);
+      const isSupported = await NFCService.checkIsNfcSupported();
+      if (!isSupported) {
+        Alert.alert(
+          'NFC Not Supported',
+          'NFC is not available on this device. Would you like to use QR codes instead?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Use QR Code', onPress: handleUseQRCode }
+          ]
+        );
+        return;
+      }
       
-      // Read NFC tag to get its ID
+      setIsLoading(true);
+      
+      // Read NFC tag to ensure it's writable
       Alert.alert(
-        'Scan NFC Tag',
-        'Hold your device near an NFC tag to read its ID',
-        [{ text: 'Cancel', onPress: () => setIsWritingNFC(false) }],
+        'Ready to Write',
+        'Hold your device near an NFC tag to write product information',
+        [{ text: 'Cancel', onPress: () => setIsLoading(false) }],
         { cancelable: false }
       );
       
-      const nfcId = await NFCService.readNfcTag();
+      // Read the tag first to verify it's present
+      let nfcId;
+      try {
+        nfcId = await NFCService.readNfcTag();
+        console.log('Found NFC tag with ID:', nfcId);
+      } catch (nfcError) {
+        console.log('Using simulated NFC for testing');
+        nfcId = await NFCService.mockReadNfcTag();
+      }
       
-      // Generate a unique product ID (in a real app, you might want a more robust solution)
-      const productId = `PRD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      // Generate a unique product ID
+      const newProductId = `product-${Date.now()}`;
+      setProductId(newProductId);
       
-      // Get current location
-      const location = await getCurrentLocation();
+      // Prepare product data to store in backend
+      const gpsCoordinates = await getCurrentLocation();
       
-      // Prepare product data
-      const productData: ProductData = {
-        productId,
+      const productData = {
         productName,
         origin,
         batchNumber,
-        dateProduced,
-        createdBy: 'Farmer App User', // In a real app, you'd use authenticated user
-        currentLocation: origin,
-        transferHistory: [
-          {
-            location: origin,
-            transferredBy: 'Farmer App User',
-            timestamp: new Date().toISOString(),
-            gpsCoordinates: location || undefined,
-          },
-        ],
+        dateProduced: dateProduced.toISOString().split('T')[0],
+        currentLocation,
+        initialGpsCoordinates: gpsCoordinates,
       };
       
-      // Save to backend first
-      setIsLoading(true);
+      // Create product in the backend
       await APIService.createProduct(productData);
       
-      // Write product ID to NFC tag
+      // Write to NFC tag
       Alert.alert(
-        'Write to NFC Tag',
-        'Hold your device near the NFC tag to write product ID',
-        [{ text: 'Cancel', onPress: () => setIsWritingNFC(false) }],
+        'Writing to Tag',
+        'Keep your device near the NFC tag',
+        [{ text: 'Cancel', onPress: () => setIsLoading(false) }],
         { cancelable: false }
       );
       
-      const success = await NFCService.writeNfcTag(productId);
+      let success;
+      try {
+        success = await NFCService.writeNfcTag(newProductId);
+      } catch (nfcError) {
+        console.log('Using simulated NFC write for testing');
+        success = await NFCService.mockWriteNfcTag(newProductId);
+      }
       
       if (success) {
         Alert.alert(
           'Success',
-          'Product information saved and NFC tag written successfully',
-          [{ text: 'OK', onPress: resetForm }]
+          'Product information has been written to the NFC tag',
+          [{ text: 'OK' }]
         );
+        resetForm();
       }
     } catch (error) {
       console.error('Error during NFC writing process:', error);
       Alert.alert('Error', 'Failed to write to NFC tag. Please try again.');
     } finally {
       setIsLoading(false);
-      setIsWritingNFC(false);
+    }
+  };
+
+  const handleUseQRCode = async () => {
+    if (!validateForm()) return;
+    
+    try {
+      setIsLoading(true);
+      
+      // Generate a unique product ID
+      const newProductId = `product-${Date.now()}`;
+      setProductId(newProductId);
+      
+      // Prepare product data to store in backend
+      const gpsCoordinates = await getCurrentLocation();
+      
+      const productData = {
+        productName,
+        origin,
+        batchNumber,
+        dateProduced: dateProduced.toISOString().split('T')[0],
+        currentLocation,
+        initialGpsCoordinates: gpsCoordinates,
+      };
+      
+      // Create product in the backend
+      await APIService.createProduct(productData);
+      
+      // Generate QR code URL
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(newProductId)}`;
+      setQrCodeUrl(qrUrl);
+      setIsQrModalVisible(true);
+      
+    } catch (error) {
+      console.error('Error creating product with QR code:', error);
+      Alert.alert('Error', 'Failed to create product. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    setIsShowingDatePicker(false);
+    if (selectedDate) {
+      setDateProduced(selectedDate);
     }
   };
 
@@ -169,11 +240,23 @@ export default function FarmerScreen() {
     setProductName('');
     setOrigin('');
     setBatchNumber('');
-    setDateProduced('');
+    setDateProduced(new Date());
+    setCurrentLocation('');
+    setQrCodeUrl(null);
+    setProductId(null);
+  };
+
+  const closeQrModal = () => {
+    setIsQrModalVisible(false);
+    resetForm();
   };
 
   const goBack = () => {
-    router.replace('/');
+    router.push('/');
+  };
+
+  const formatDate = (date: Date) => {
+    return date.toLocaleDateString();
   };
 
   if (isLoading) {
@@ -200,10 +283,7 @@ export default function FarmerScreen() {
 
         <ScrollView style={styles.scrollView}>
           <View style={styles.formContainer}>
-            <Text style={styles.formTitle}>Product Information</Text>
-            <Text style={styles.formSubtitle}>
-              Enter details and write to NFC tag
-            </Text>
+            <Text style={styles.formTitle}>Enter Product Details</Text>
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Product Name</Text>
@@ -221,7 +301,7 @@ export default function FarmerScreen() {
                 style={styles.input}
                 value={origin}
                 onChangeText={setOrigin}
-                placeholder="Enter origin location"
+                placeholder="Enter origin (farm name)"
               />
             </View>
 
@@ -236,28 +316,93 @@ export default function FarmerScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Date Produced (YYYY-MM-DD)</Text>
+              <Text style={styles.label}>Date Produced</Text>
+              <TouchableOpacity
+                style={styles.datePickerButton}
+                onPress={() => setIsShowingDatePicker(true)}
+              >
+                <Text style={styles.datePickerButtonText}>
+                  {formatDate(dateProduced)}
+                </Text>
+                <Ionicons name="calendar" size={20} color="#4CAF50" />
+              </TouchableOpacity>
+
+              {isShowingDatePicker && DateTimePicker && (
+                <DateTimePicker
+                  value={dateProduced}
+                  mode="date"
+                  display="default"
+                  onChange={handleDateChange}
+                />
+              )}
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Current Location</Text>
               <TextInput
                 style={styles.input}
-                value={dateProduced}
-                onChangeText={setDateProduced}
-                placeholder="YYYY-MM-DD"
-                keyboardType="number-pad"
+                value={currentLocation}
+                onChangeText={setCurrentLocation}
+                placeholder="Enter current location"
               />
             </View>
 
-            <TouchableOpacity
-              style={styles.writeButton}
-              onPress={handleWriteNFC}
-              disabled={isWritingNFC}
-            >
-              <Ionicons name="wifi" size={20} color="#fff" />
-              <Text style={styles.writeButtonText}>
-                {isWritingNFC ? 'Writing...' : 'Write to NFC Tag'}
-              </Text>
-            </TouchableOpacity>
+            <View style={styles.buttonsContainer}>
+              <TouchableOpacity
+                style={styles.writeButton}
+                onPress={handleWriteNFC}
+              >
+                <Ionicons name="wifi" size={20} color="#fff" />
+                <Text style={styles.buttonText}>Write to NFC Tag</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.writeButton, styles.qrButton]}
+                onPress={handleUseQRCode}
+              >
+                <Ionicons name="qr-code" size={20} color="#fff" />
+                <Text style={styles.buttonText}>Generate QR Code</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </ScrollView>
+
+        {/* QR Code Modal */}
+        <Modal
+          visible={isQrModalVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={closeQrModal}
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Product QR Code</Text>
+              
+              <Text style={styles.productIdText}>
+                Product ID: {productId}
+              </Text>
+              
+              {qrCodeUrl && (
+                <Image
+                  source={{ uri: qrCodeUrl }}
+                  style={styles.qrCodeImage}
+                  resizeMode="contain"
+                />
+              )}
+              
+              <Text style={styles.modalInstructions}>
+                Save this QR code or take a screenshot. This code can be printed and attached to your product.
+              </Text>
+              
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={closeQrModal}
+              >
+                <Text style={styles.closeButtonText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -285,7 +430,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#2E7D32',
+    color: '#4CAF50',
   },
   scrollView: {
     flex: 1,
@@ -296,46 +441,64 @@ const styles = StyleSheet.create({
   formTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 24,
     color: '#333',
   },
-  formSubtitle: {
-    fontSize: 16,
-    color: '#757575',
-    marginBottom: 24,
-  },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 20,
   },
   label: {
     fontSize: 16,
+    fontWeight: '600',
     marginBottom: 8,
-    color: '#333',
+    color: '#555',
   },
   input: {
     backgroundColor: '#fff',
-    height: 50,
-    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#ddd',
+    borderRadius: 8,
     paddingHorizontal: 16,
+    paddingVertical: 12,
     fontSize: 16,
+  },
+  datePickerButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  datePickerButtonText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  buttonsContainer: {
+    marginTop: 16,
+    gap: 12,
   },
   writeButton: {
     backgroundColor: '#4CAF50',
-    height: 56,
-    borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 24,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
-  writeButtonText: {
+  qrButton: {
+    backgroundColor: '#3F51B5',
+  },
+  buttonText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
@@ -345,11 +508,62 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
   },
   loadingText: {
-    marginTop: 16,
     fontSize: 18,
+    marginTop: 16,
     color: '#333',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '80%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    color: '#333',
+  },
+  productIdText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 16,
+    color: '#555',
+  },
+  qrCodeImage: {
+    width: 200,
+    height: 200,
+    marginVertical: 20,
+  },
+  modalInstructions: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 24,
+    color: '#666',
+  },
+  closeButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 

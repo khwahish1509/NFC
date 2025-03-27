@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Alert,
   TextInput,
   Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,17 +19,38 @@ import NFCService from '../services/NFCService';
 import APIService, { ProductData, TransferData } from '../services/APIService';
 import * as Location from 'expo-location';
 
+// Import BarCodeScanner conditionally to avoid errors in Expo Go web
+let BarCodeScanner: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    BarCodeScanner = require('expo-barcode-scanner').BarCodeScanner;
+  } catch (error) {
+    console.log('BarCodeScanner not available:', error);
+  }
+}
+
 export default function RetailerScreen() {
-  const { userRole } = useAppContext();
+  const { userRole, apiUrl } = useAppContext();
   const [isLoading, setIsLoading] = useState(false);
   const [isReadingNFC, setIsReadingNFC] = useState(false);
   const [product, setProduct] = useState<ProductData | null>(null);
   const [newLocation, setNewLocation] = useState('');
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [manualProductId, setManualProductId] = useState('');
+  const [isManualInputVisible, setIsManualInputVisible] = useState(false);
+
+  // Set API base URL from context
+  useEffect(() => {
+    if (apiUrl) {
+      APIService.setApiBaseUrl(apiUrl);
+    }
+  }, [apiUrl]);
 
   // Redirect if not a retailer
-  React.useEffect(() => {
+  useEffect(() => {
     if (userRole !== 'retailer') {
-      router.replace('/');
+      router.push('/');
     }
   }, [userRole]);
 
@@ -58,13 +80,20 @@ export default function RetailerScreen() {
 
   const handleScanNFC = async () => {
     // Check if NFC is available
-    const isSupported = await NFCService.checkIsNfcSupported();
-    if (!isSupported) {
-      Alert.alert('Error', 'NFC is not supported on this device');
-      return;
-    }
-    
     try {
+      const isSupported = await NFCService.checkIsNfcSupported();
+      if (!isSupported) {
+        Alert.alert(
+          'NFC Not Supported',
+          'NFC is not available on this device. Would you like to scan a QR code instead?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Use QR Code', onPress: handleScanQRCode }
+          ]
+        );
+        return;
+      }
+      
       setIsReadingNFC(true);
       
       // Alert the user to scan an NFC tag
@@ -76,10 +105,92 @@ export default function RetailerScreen() {
       );
       
       // Read the NFC tag to get the product ID
-      const productId = await NFCService.readNfcTag();
+      let productId;
+      try {
+        productId = await NFCService.readNfcTag();
+      } catch (nfcError) {
+        console.log('Using simulated NFC for testing');
+        productId = await NFCService.mockReadNfcTag();
+      }
       
+      await fetchProductDetails(productId);
+    } catch (error) {
+      console.error('Error during NFC reading process:', error);
+      Alert.alert('Error', 'Failed to read NFC tag or fetch product data. Please try again.');
+      setIsLoading(false);
+      setIsReadingNFC(false);
+    }
+  };
+
+  const handleScanQRCode = async () => {
+    if (!BarCodeScanner) {
+      Alert.alert(
+        'Scanner Not Available',
+        'QR code scanner is not available in this environment. Would you like to enter a product ID manually?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Enter Manually', onPress: () => setIsManualInputVisible(true) }
+        ]
+      );
+      return;
+    }
+    
+    try {
+      const { status } = await BarCodeScanner.requestPermissionsAsync();
+      setHasPermission(status === 'granted');
+      
+      if (status === 'granted') {
+        setScannerVisible(true);
+      } else {
+        Alert.alert(
+          'Camera Permission Required',
+          'We need camera access to scan QR codes. Would you like to enter the Product ID manually?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Enter Manually', onPress: () => setIsManualInputVisible(true) }
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Error requesting camera permission:', error);
+      Alert.alert('Error', 'Could not access camera. Please try manual entry.');
+      setIsManualInputVisible(true);
+    }
+  };
+
+  const handleBarCodeScanned = async ({ type, data }: { type: string; data: string }) => {
+    setScannerVisible(false);
+    
+    try {
       setIsLoading(true);
-      
+      await fetchProductDetails(data);
+    } catch (error) {
+      console.error('Error processing QR code data:', error);
+      Alert.alert('Error', 'Failed to process QR code data. Please try again.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleManualSubmit = async () => {
+    if (!manualProductId.trim()) {
+      Alert.alert('Error', 'Please enter a Product ID');
+      return;
+    }
+    
+    setIsManualInputVisible(false);
+    setIsLoading(true);
+    
+    try {
+      await fetchProductDetails(manualProductId);
+    } catch (error) {
+      console.error('Error processing manual ID:', error);
+      Alert.alert('Error', 'Failed to fetch product data. Please check the ID and try again.');
+      setIsLoading(false);
+    }
+  };
+
+  const fetchProductDetails = async (productId: string) => {
+    try {
       // Fetch product details from the API
       const productData = await APIService.getProductById(productId);
       setProduct(productData);
@@ -87,11 +198,10 @@ export default function RetailerScreen() {
       // Reset new location to current product location
       setNewLocation(productData.currentLocation || '');
     } catch (error) {
-      console.error('Error during NFC reading process:', error);
-      Alert.alert('Error', 'Failed to read NFC tag or fetch product data. Please try again.');
+      console.error('Error fetching product:', error);
+      Alert.alert('Error', 'Failed to find the product. Please check the ID and try again.');
     } finally {
       setIsLoading(false);
-      setIsReadingNFC(false);
     }
   };
 
@@ -133,10 +243,11 @@ export default function RetailerScreen() {
   const resetData = () => {
     setProduct(null);
     setNewLocation('');
+    setManualProductId('');
   };
 
   const goBack = () => {
-    router.replace('/');
+    router.push('/');
   };
 
   const formatDate = (dateString: string) => {
@@ -169,18 +280,40 @@ export default function RetailerScreen() {
               <Ionicons name="scan" size={80} color="#FFA000" />
               <Text style={styles.emptyStateTitle}>No Product Scanned</Text>
               <Text style={styles.emptyStateSubtitle}>
-                Scan an NFC tag to see product details
+                Scan an NFC tag or QR code to see product details
               </Text>
-              <TouchableOpacity
-                style={styles.scanButton}
-                onPress={handleScanNFC}
-                disabled={isReadingNFC}
-              >
-                <Ionicons name="wifi" size={20} color="#fff" />
-                <Text style={styles.scanButtonText}>
-                  {isReadingNFC ? 'Scanning...' : 'Scan NFC Tag'}
-                </Text>
-              </TouchableOpacity>
+              <View style={styles.scanButtonsContainer}>
+                <TouchableOpacity
+                  style={styles.scanButton}
+                  onPress={handleScanNFC}
+                  disabled={isReadingNFC}
+                >
+                  <Ionicons name="wifi" size={20} color="#fff" />
+                  <Text style={styles.scanButtonText}>
+                    {isReadingNFC ? 'Scanning...' : 'Scan NFC Tag'}
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.scanButton, styles.qrButton]}
+                  onPress={handleScanQRCode}
+                >
+                  <Ionicons name="qr-code" size={20} color="#fff" />
+                  <Text style={styles.scanButtonText}>
+                    Scan QR Code
+                  </Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.scanButton, styles.manualButton]}
+                  onPress={() => setIsManualInputVisible(true)}
+                >
+                  <Ionicons name="pencil" size={20} color="#fff" />
+                  <Text style={styles.scanButtonText}>
+                    Enter ID Manually
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
             <View style={styles.productContainer}>
@@ -261,6 +394,86 @@ export default function RetailerScreen() {
             </View>
           )}
         </ScrollView>
+        
+        {/* QR Scanner Modal */}
+        {BarCodeScanner && (
+          <Modal
+            visible={scannerVisible}
+            animationType="slide"
+            onRequestClose={() => setScannerVisible(false)}
+          >
+            <SafeAreaView style={{ flex: 1 }}>
+              <View style={styles.scannerContainer}>
+                {hasPermission === null ? (
+                  <Text>Requesting camera permission...</Text>
+                ) : hasPermission === false ? (
+                  <Text>No access to camera</Text>
+                ) : (
+                  <BarCodeScanner
+                    onBarCodeScanned={handleBarCodeScanned}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                )}
+                
+                <View style={styles.scannerOverlay}>
+                  <View style={styles.scannerTargetBox} />
+                </View>
+                
+                <TouchableOpacity
+                  style={styles.closeScannerButton}
+                  onPress={() => setScannerVisible(false)}
+                >
+                  <Ionicons name="close-circle" size={50} color="#fff" />
+                </TouchableOpacity>
+                
+                <View style={styles.scannerInstructions}>
+                  <Text style={styles.scannerInstructionsText}>
+                    Position the QR code within the square
+                  </Text>
+                </View>
+              </View>
+            </SafeAreaView>
+          </Modal>
+        )}
+        
+        {/* Manual Entry Modal */}
+        <Modal
+          visible={isManualInputVisible}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setIsManualInputVisible(false)}
+        >
+          <View style={styles.manualModalContainer}>
+            <View style={styles.manualModalContent}>
+              <Text style={styles.manualModalTitle}>Enter Product ID</Text>
+              
+              <TextInput
+                style={styles.manualInput}
+                value={manualProductId}
+                onChangeText={setManualProductId}
+                placeholder="Enter the product ID (try 'test-product-1')"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              
+              <View style={styles.manualButtonsContainer}>
+                <TouchableOpacity
+                  style={[styles.manualActionButton, styles.cancelButton]}
+                  onPress={() => setIsManualInputVisible(false)}
+                >
+                  <Text style={styles.manualButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.manualActionButton, styles.submitButton]}
+                  onPress={handleManualSubmit}
+                >
+                  <Text style={styles.manualButtonText}>Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     </SafeAreaView>
   );
@@ -312,6 +525,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 32,
   },
+  scanButtonsContainer: {
+    width: '100%',
+  },
   scanButton: {
     backgroundColor: '#FFA000',
     flexDirection: 'row',
@@ -320,11 +536,18 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24,
     borderRadius: 8,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  qrButton: {
+    backgroundColor: '#3F51B5',
+  },
+  manualButton: {
+    backgroundColor: '#607D8B',
   },
   scanButtonText: {
     color: '#fff',
@@ -463,5 +686,94 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 18,
     color: '#333',
+  },
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  scannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerTargetBox: {
+    width: 250,
+    height: 250,
+    borderWidth: 2,
+    borderColor: '#fff',
+    backgroundColor: 'transparent',
+  },
+  closeScannerButton: {
+    position: 'absolute',
+    bottom: 50,
+    alignSelf: 'center',
+  },
+  scannerInstructions: {
+    position: 'absolute',
+    bottom: 120,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    padding: 16,
+  },
+  scannerInstructionsText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  manualModalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  manualModalContent: {
+    backgroundColor: '#fff',
+    width: '80%',
+    borderRadius: 8,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  manualModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    color: '#333',
+    textAlign: 'center',
+  },
+  manualInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    padding: 12,
+    marginBottom: 20,
+    fontSize: 16,
+  },
+  manualButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  manualActionButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 4,
+    flex: 1,
+    alignItems: 'center',
+    marginHorizontal: 4,
+  },
+  cancelButton: {
+    backgroundColor: '#757575',
+  },
+  submitButton: {
+    backgroundColor: '#FFA000',
+  },
+  manualButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
 }); 

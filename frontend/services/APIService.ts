@@ -1,26 +1,27 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 
-// Base URL should be configured based on environment - set a default for now
-// For development with actual devices, this should be the IP address of your computer on the local network
-// In a real production app, this would come from environment variables
-let API_BASE_URL = 'http://localhost:5000/api';
-
-// Function to set the API base URL
-export const setApiBaseUrl = (url: string) => {
-  API_BASE_URL = url;
-};
-
-// Types for our data models
+// Types
 export interface ProductData {
   productId: string;
   productName: string;
   origin: string;
   batchNumber: string;
   dateProduced: string;
-  createdBy: string;
   currentLocation: string;
   transferHistory?: TransferData[];
+}
+
+export interface NewProductData {
+  productName: string;
+  origin: string;
+  batchNumber: string;
+  dateProduced: string;
+  currentLocation: string;
+  initialGpsCoordinates?: {
+    latitude: number;
+    longitude: number;
+  } | null;
 }
 
 export interface TransferData {
@@ -30,149 +31,170 @@ export interface TransferData {
   gpsCoordinates?: {
     latitude: number;
     longitude: number;
-  };
+  } | null;
 }
 
-// Mock data for web testing - won't affect real API calls
-const mockProducts: Record<string, ProductData> = {
-  'test-product-1': {
-    productId: 'test-product-1',
-    productName: 'Organic Tomatoes',
-    origin: 'Green Valley Farm',
-    batchNumber: 'B12345',
-    dateProduced: '2023-10-15',
-    createdBy: 'John Farmer',
-    currentLocation: 'Green Valley Farm',
-    transferHistory: [
-      {
-        location: 'Green Valley Farm',
-        transferredBy: 'John Farmer',
-        timestamp: '2023-10-15T10:30:00Z'
-      }
-    ]
-  }
-};
-
-// Helper function to check if we're in a web environment
+// Safely check if code is running in a web environment for mocking
 const isWebMockEnvironment = () => {
-  // For Expo Go, use platform check
-  if (Platform.OS === 'web') return true;
-  
-  // Safer check for React Native web debugging
   try {
-    return typeof window !== 'undefined' && 
-           window.navigator && 
-           typeof window.navigator.userAgent === 'string' && 
-           window.navigator.userAgent.includes('ReactNativeDebugger');
+    return Platform.OS === 'web';
   } catch (error) {
-    // If there's any error in the check, assume we're not in a web mock environment
     return false;
   }
 };
 
-// API service class
+// Mock data for web testing
+const mockProducts: { [key: string]: ProductData } = {
+  'test-product-1': {
+    productId: 'test-product-1',
+    productName: 'Organic Apples',
+    origin: 'Green Valley Farm',
+    batchNumber: 'B12345',
+    dateProduced: '2023-04-15',
+    currentLocation: 'Distribution Center A',
+    transferHistory: [
+      {
+        location: 'Green Valley Farm',
+        transferredBy: 'John Smith',
+        timestamp: '2023-04-15T09:00:00Z',
+        gpsCoordinates: {
+          latitude: 37.7749,
+          longitude: -122.4194,
+        },
+      },
+      {
+        location: 'Distribution Center A',
+        transferredBy: 'Alice Johnson',
+        timestamp: '2023-04-18T14:30:00Z',
+        gpsCoordinates: {
+          latitude: 37.3382,
+          longitude: -121.8863,
+        },
+      },
+    ],
+  },
+};
+
 class APIService {
+  private apiBaseUrl: string = 'http://localhost:5000/api';
+
+  constructor() {
+    // Default API URL will be set by context
+  }
+
+  // Method to update the API base URL
+  setApiBaseUrl(url: string) {
+    this.apiBaseUrl = url;
+    console.log('API base URL set to:', url);
+  }
+
   // Create a new product
-  createProduct = async (productData: ProductData) => {
+  async createProduct(productData: NewProductData): Promise<ProductData> {
+    // For web environment (testing), use mock data
+    if (isWebMockEnvironment()) {
+      const mockProductId = `test-product-${Date.now()}`;
+      const mockProduct: ProductData = {
+        ...productData,
+        productId: mockProductId,
+        transferHistory: [
+          {
+            location: productData.origin,
+            transferredBy: 'Farmer App User',
+            timestamp: new Date().toISOString(),
+            gpsCoordinates: productData.initialGpsCoordinates || undefined,
+          },
+        ],
+      };
+      
+      mockProducts[mockProductId] = mockProduct;
+      return mockProduct;
+    }
+    
+    // For native environments, call the actual API
     try {
-      // Handle web environment with mock data
-      if (isWebMockEnvironment()) {
-        console.log('Mock API call - createProduct', productData);
-        mockProducts[productData.productId] = productData;
-        return productData;
-      }
-
-      const response = await axios.post(
-        `${API_BASE_URL}/products`,
-        productData
-      );
+      const response = await axios.post(`${this.apiBaseUrl}/products`, productData);
       return response.data;
     } catch (error) {
-      console.error('Error creating product:', error);
-      throw error;
+      console.error('API Error - Create Product:', error);
+      throw new Error('Failed to create product');
     }
-  };
+  }
 
-  // Get product by its ID
-  getProductById = async (productId: string) => {
-    try {
-      // Handle web environment with mock data
-      if (isWebMockEnvironment()) {
-        console.log('Mock API call - getProductById', productId);
-        // Return mock data for testing
-        if (mockProducts[productId]) {
-          return mockProducts[productId];
-        }
-        // Return test product if ID doesn't exist in mock data
-        return mockProducts['test-product-1'];
+  // Get a product by ID
+  async getProductById(productId: string): Promise<ProductData> {
+    // For web environment (testing), use mock data
+    if (isWebMockEnvironment()) {
+      const mockProduct = mockProducts[productId];
+      if (mockProduct) {
+        return { ...mockProduct }; // Return a copy to avoid mutation
       }
-
-      const response = await axios.get(
-        `${API_BASE_URL}/products/${productId}`
-      );
+      throw new Error('Product not found');
+    }
+    
+    // For native environments, call the actual API
+    try {
+      const response = await axios.get(`${this.apiBaseUrl}/products/${productId}`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching product:', error);
-      throw error;
+      console.error('API Error - Get Product:', error);
+      throw new Error('Failed to get product');
     }
-  };
+  }
 
   // Get all products
-  getAllProducts = async () => {
+  async getAllProducts(): Promise<ProductData[]> {
+    // For web environment (testing), use mock data
+    if (isWebMockEnvironment()) {
+      return Object.values(mockProducts);
+    }
+    
+    // For native environments, call the actual API
     try {
-      // Handle web environment with mock data
-      if (isWebMockEnvironment()) {
-        console.log('Mock API call - getAllProducts');
-        return Object.values(mockProducts);
-      }
-
-      const response = await axios.get(`${API_BASE_URL}/products`);
+      const response = await axios.get(`${this.apiBaseUrl}/products`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching all products:', error);
-      throw error;
+      console.error('API Error - Get All Products:', error);
+      throw new Error('Failed to get products');
     }
-  };
+  }
 
-  // Update product transfer history
-  updateProductTransfer = async (
-    productId: string,
-    transferData: TransferData
-  ) => {
-    try {
-      // Handle web environment with mock data
-      if (isWebMockEnvironment()) {
-        console.log('Mock API call - updateProductTransfer', productId, transferData);
-        
-        if (mockProducts[productId]) {
-          const product = mockProducts[productId];
-          product.currentLocation = transferData.location;
-          
-          if (!product.transferHistory) {
-            product.transferHistory = [];
-          }
-          
-          product.transferHistory.push({
-            ...transferData,
-            timestamp: new Date().toISOString()
-          });
-          
-          return product;
-        }
-        
-        return mockProducts['test-product-1'];
+  // Update a product's transfer history
+  async updateProductTransfer(productId: string, transferData: TransferData): Promise<ProductData> {
+    // For web environment (testing), use mock data
+    if (isWebMockEnvironment()) {
+      const mockProduct = mockProducts[productId];
+      if (!mockProduct) {
+        throw new Error('Product not found');
       }
-
-      const response = await axios.patch(
-        `${API_BASE_URL}/products/${productId}/transfer`,
+      
+      // Add timestamp if not provided
+      const transfer = {
+        ...transferData,
+        timestamp: transferData.timestamp || new Date().toISOString(),
+      };
+      
+      // Update the mock product
+      mockProduct.currentLocation = transfer.location;
+      mockProduct.transferHistory = [
+        ...(mockProduct.transferHistory || []),
+        transfer,
+      ];
+      
+      return { ...mockProduct }; // Return a copy to avoid mutation
+    }
+    
+    // For native environments, call the actual API
+    try {
+      const response = await axios.post(
+        `${this.apiBaseUrl}/products/${productId}/transfers`,
         transferData
       );
       return response.data;
     } catch (error) {
-      console.error('Error updating product transfer:', error);
-      throw error;
+      console.error('API Error - Update Transfer:', error);
+      throw new Error('Failed to update product transfer');
     }
-  };
+  }
 }
 
 export default new APIService(); 
