@@ -9,14 +9,19 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.khwahishvaid.nfcfarmtomarket",
+      "infoPlist": {
+        "NFCReaderUsageDescription": "This app uses NFC to read and write product information to tags."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": ["NFC"]
+      "permissions": ["NFC", "ACCESS_FINE_LOCATION"],
+      "package": "com.khwahishvaid.nfcfarmtomarket"
     },
     "web": {
       "bundler": "metro",
@@ -33,11 +38,21 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      ["expo-barcode-scanner"],
+      ["expo-location"]
     ],
     "experiments": {
       "typedRoutes": true,
       "tsconfigPaths": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "d1d3a7a6-d8ba-448e-9161-4587dfd0cc8e"
+      }
     }
   }
 }
