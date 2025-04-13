@@ -1,4 +1,4 @@
-# NFC Farm Product Tracking System
+# NFC Farm Product Tracking System (to be continued)
 
 A cross-platform mobile application for tracking agricultural products from farm to retail using NFC technology.
 
